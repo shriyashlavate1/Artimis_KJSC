@@ -59,9 +59,6 @@ const defaultState = {
     date: '1st of this month'
   },
 
-  // What-if explorer contribution boost
-  whatIfContributionBoost: 1000,
-  
   // Market dip simulator state
   dipScenario: {
     dropPercent: 22,
@@ -87,13 +84,70 @@ const defaultState = {
   videoSpeed: '1x'
 };
 
+const PLAN_INPUT_LIMITS = {
+  goalAmount: { min: 50000, max: 100000000 },
+  timeHorizonYears: { min: 3, max: 15 },
+  monthlyContribution: { min: 500, max: 15000 }
+};
+
+let planLoadWarning = false;
+
+function isWholeNumberInRange(value, { min, max }) {
+  return Number.isSafeInteger(value) && value >= min && value <= max;
+}
+
+function normalizeLoadedPlan(loaded) {
+  let repaired = false;
+  Object.keys(PLAN_INPUT_LIMITS).forEach(key => {
+    if (!isWholeNumberInRange(loaded[key], PLAN_INPUT_LIMITS[key])) {
+      loaded[key] = defaultState[key];
+      repaired = true;
+    }
+  });
+
+  if (!['low', 'moderate', 'high'].includes(loaded.comfortLevel)) {
+    loaded.comfortLevel = defaultState.comfortLevel;
+    repaired = true;
+  }
+  if (!['slower', 'middle', 'faster'].includes(loaded.selectedScenario)) {
+    loaded.selectedScenario = defaultState.selectedScenario;
+    repaired = true;
+  }
+  if (!Number.isSafeInteger(loaded.simulatedMonthsElapsed) || loaded.simulatedMonthsElapsed < 0) {
+    loaded.simulatedMonthsElapsed = defaultState.simulatedMonthsElapsed;
+    repaired = true;
+  }
+  if (!Number.isFinite(loaded.stipendAmount) || loaded.stipendAmount <= 0) {
+    loaded.stipendAmount = defaultState.stipendAmount;
+    repaired = true;
+  }
+
+  const dip = loaded.dipScenario;
+  if (!dip || !Number.isFinite(dip.dropPercent) || dip.dropPercent < 1 || dip.dropPercent > 80) {
+    loaded.dipScenario = Object.assign({}, defaultState.dipScenario);
+    repaired = true;
+  } else if (!['continue', 'pause', 'increase'].includes(dip.actionTaken)) {
+    dip.actionTaken = defaultState.dipScenario.actionTaken;
+    repaired = true;
+  }
+  return repaired;
+}
+
 // Load saved state or default
 let state = (function() {
   let loaded = Object.assign({}, defaultState);
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      Object.assign(loaded, JSON.parse(saved));
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        Object.assign(loaded, parsed);
+      } else {
+        planLoadWarning = true;
+      }
+    }
+    if (normalizeLoadedPlan(loaded)) {
+      planLoadWarning = true;
     }
     const savedTheme = localStorage.getItem('milestone_theme');
     if (savedTheme) {
@@ -101,6 +155,7 @@ let state = (function() {
     }
   } catch (e) {
     console.warn('LocalStorage error:', e);
+    planLoadWarning = true;
   }
   return loaded;
 })();
@@ -111,9 +166,33 @@ function saveState() {
     if (state.theme) {
       localStorage.setItem('milestone_theme', state.theme);
     }
+    return true;
   } catch (e) {
     console.warn('Failed to save state:', e);
+    return false;
   }
+}
+
+function persistPlan(showSaved = false) {
+  const saved = saveState();
+  if (!saved) {
+    showToast('Your plan could not be saved on this device. Changes remain active for this visit.');
+  } else if (showSaved) {
+    showToast('Your plan is saved on this device.');
+  }
+  return saved;
+}
+
+function validatePlanInput(key, value) {
+  const limits = PLAN_INPUT_LIMITS[key];
+  if (!limits || !isWholeNumberInRange(value, limits)) return false;
+  if (key === 'goalAmount') return value % 50000 === 0;
+  if (key === 'monthlyContribution') return value % 250 === 0;
+  return true;
+}
+
+function scenarioForComfort(level) {
+  return ({ low: 'slower', moderate: 'middle', high: 'faster' })[level] || 'middle';
 }
 
 // Formatting helpers
@@ -134,26 +213,21 @@ function formatLakhs(number) {
   return formatINR(number);
 }
 
-// SIP Future Value formula
-function calculateSIP(monthly, annualRatePct, years) {
+function calculateSIPValue(monthly, annualRatePct, years) {
   const r = annualRatePct / 100 / 12;
-  const n = years * 12;
+  const n = Math.max(0, Math.round(years * 12));
   if (r === 0) return monthly * n;
-  const fv = monthly * ((Math.pow(1 + r, n) - 1) / r) * (1 + r);
-  return Math.round(fv);
+  return monthly * ((Math.pow(1 + r, n) - 1) / r);
 }
 
-// Estimate years needed to reach target goal
-function calculateYearsToGoal(monthly, annualRatePct, targetGoal) {
-  const r = annualRatePct / 100 / 12;
-  let balance = 0;
-  let months = 0;
-  const maxMonths = 360; // 30 years limit
-  while (balance < targetGoal && months < maxMonths) {
-    balance = (balance + monthly) * (1 + r);
-    months++;
-  }
-  return (months / 12).toFixed(1);
+function roundMonthlyContributionUp(amount) {
+  return Math.ceil(amount / 250) * 250;
+}
+
+function formatGoalTime(years) {
+  if (years === null) return 'More than 100 years';
+  if (years === 0) return 'Goal reached';
+  return `about ${years.toFixed(1)} years`;
 }
 
 // Scenario rates
@@ -161,8 +235,7 @@ const SCENARIO_RATES = {
   slower: {
     name: 'Slower',
     title: 'Conservative & Steady',
-    rate: 7, // 6-8%
-    rateRange: '6% – 8% p.a.',
+    rateRange: 'About 9.5% p.a.',
     maxDip: '-8%',
     description: 'Prioritizes lower short-term swings. Progress is calmer, requiring a longer horizon or higher contribution.',
     composition: '65% Short-Term Debt / Fixed Income • 35% Broad Market Equity',
@@ -172,8 +245,7 @@ const SCENARIO_RATES = {
   middle: {
     name: 'Middle',
     title: 'Balanced & Broad',
-    rate: 11, // 10-12%
-    rateRange: '10% – 12% p.a.',
+    rateRange: 'About 11.6% p.a.',
     maxDip: '-18%',
     description: 'Balanced approach mirroring broad diversified index funds (Nifty 50). Noticeable ups and downs, but healthy multi-year compounding.',
     composition: '75% Diversified Index Equity (Nifty 50) • 25% Liquid Buffer',
@@ -183,8 +255,7 @@ const SCENARIO_RATES = {
   faster: {
     name: 'Faster',
     title: 'Growth-Focused',
-    rate: 13.5, // 13-15%
-    rateRange: '13% – 15% p.a.',
+    rateRange: 'About 13.4% p.a.',
     maxDip: '-30%',
     description: 'Higher equity exposure seeking faster potential compounding. Accompanied by steeper paper drops during bad market years.',
     composition: '90% Equity (Large + Midcap Index) • 10% Cash Reserve',
@@ -192,6 +263,84 @@ const SCENARIO_RATES = {
     volatilityClass: 'bg-amber-100 text-amber-800'
   }
 };
+
+const PLAN_ALLOCATIONS = {
+  slower: {
+    name: 'Slower example plan',
+    allocations: [
+      { category: 'Equity', percent: 30, annualRatePct: 15, description: 'A share of many companies through a broad fund.', risk: 'Its value can fall when markets fall.' },
+      { category: 'Debt', percent: 60, annualRatePct: 7, description: 'Loans to governments or companies that may pay interest.', risk: 'Prices, interest rates, and repayment can still carry risk.' },
+      { category: 'Gold', percent: 10, annualRatePct: 8, description: 'An example holding linked to the price of gold.', risk: 'Gold prices can rise or fall and do not provide regular income.' }
+    ]
+  },
+  middle: {
+    name: 'Middle example plan',
+    allocations: [
+      { category: 'Equity', percent: 60, annualRatePct: 15, description: 'A share of many companies through a broad fund.', risk: 'Its value can fall when markets fall.' },
+      { category: 'Debt', percent: 30, annualRatePct: 7, description: 'Loans to governments or companies that may pay interest.', risk: 'Prices, interest rates, and repayment can still carry risk.' },
+      { category: 'Gold', percent: 10, annualRatePct: 8, description: 'An example holding linked to the price of gold.', risk: 'Gold prices can rise or fall and do not provide regular income.' }
+    ]
+  },
+  faster: {
+    name: 'Faster example plan',
+    allocations: [
+      { category: 'Equity', percent: 80, annualRatePct: 15, description: 'A share of many companies through a broad fund.', risk: 'Its value can fall sharply when markets fall.' },
+      { category: 'Debt', percent: 10, annualRatePct: 7, description: 'Loans to governments or companies that may pay interest.', risk: 'Prices, interest rates, and repayment can still carry risk.' },
+      { category: 'Gold', percent: 10, annualRatePct: 8, description: 'An example holding linked to the price of gold.', risk: 'Gold prices can rise or fall and do not provide regular income.' }
+    ]
+  }
+};
+
+function getScenarioAnnualRate(scenarioKey) {
+  const allocations = PLAN_ALLOCATIONS[scenarioKey]?.allocations || PLAN_ALLOCATIONS.middle.allocations;
+  return allocations.reduce((rate, item) => rate + item.percent * item.annualRatePct / 100, 0);
+}
+
+function calculatePlanSIP(monthly, scenarioKey, years) {
+  const allocations = PLAN_ALLOCATIONS[scenarioKey]?.allocations || PLAN_ALLOCATIONS.middle.allocations;
+  const value = allocations.reduce((total, item) => {
+    const categoryMonthly = monthly * item.percent / 100;
+    return total + calculateSIPValue(categoryMonthly, item.annualRatePct, years);
+  }, 0);
+  return Math.round(value);
+}
+
+function calculatePlanMonthlyNeeded(targetGoal, scenarioKey, years, startingBalance = 0) {
+  const allocations = PLAN_ALLOCATIONS[scenarioKey]?.allocations || PLAN_ALLOCATIONS.middle.allocations;
+  const months = Math.max(0, Math.round(years * 12));
+  if (targetGoal <= 0 || months === 0) return targetGoal <= startingBalance ? 0 : null;
+
+  let startingValue = 0;
+  let monthlyGrowthFactor = 0;
+  allocations.forEach(item => {
+    const share = item.percent / 100;
+    const monthlyRate = item.annualRatePct / 100 / 12;
+    const growth = Math.pow(1 + monthlyRate, months);
+    startingValue += startingBalance * share * growth;
+    monthlyGrowthFactor += calculateSIPValue(share, item.annualRatePct, years);
+  });
+
+  const remainingGoal = targetGoal - startingValue;
+  if (remainingGoal <= 0) return 0;
+  if (monthlyGrowthFactor <= 0) return null;
+  return Math.ceil(remainingGoal / monthlyGrowthFactor);
+}
+
+function calculatePlanYearsToGoal(monthly, scenarioKey, targetGoal, startingBalance = 0) {
+  const allocations = PLAN_ALLOCATIONS[scenarioKey]?.allocations || PLAN_ALLOCATIONS.middle.allocations;
+  if (targetGoal <= startingBalance) return 0;
+  if (monthly <= 0 && allocations.every(item => item.annualRatePct <= 0)) return null;
+
+  const balances = allocations.map(item => startingBalance * item.percent / 100);
+  for (let month = 1; month <= 1200; month++) {
+    allocations.forEach((item, index) => {
+      balances[index] = balances[index] * (1 + item.annualRatePct / 100 / 12) +
+        monthly * item.percent / 100;
+    });
+    if (balances.reduce((total, balance) => total + balance, 0) >= targetGoal) return month / 12;
+  }
+  return null;
+}
 
 /* =========================================================================
    EXPLORE INVESTMENT OPTIONS (Educational Data)
@@ -594,6 +743,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   state.activeTab = initialTab;
   renderApp();
+  if (planLoadWarning) {
+    showToast('Some saved plan details were invalid and have been restored to safe defaults.');
+  }
 });
 
 function bindGlobalEvents() {
@@ -686,8 +838,8 @@ function renderTopNavigation() {
           <span>Overview</span>
         </button>
         <button type="button" onclick="navigateTo('receipt')"
-          class="text-sm font-semibold transition-colors flex items-center gap-1.5 ${active === 'receipt' ? 'nav-link-active' : 'text-stone-600 dark:text-stone-300 hover:text-stone-900 dark:hover:text-white'}">
-          <span>My plan</span>
+          class="text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap ${active === 'receipt' ? 'nav-link-active' : 'text-stone-600 dark:text-stone-300 hover:text-stone-900 dark:hover:text-white'}">
+          <span style="white-space: nowrap">My plan</span>
         </button>
         <button type="button" onclick="navigateTo('learn')"
           class="text-sm font-semibold transition-colors flex items-center gap-1.5 ${active === 'learn' ? 'nav-link-active' : 'text-stone-600 dark:text-stone-300 hover:text-stone-900 dark:hover:text-white'}">
@@ -1078,7 +1230,8 @@ function showToast(message) {
     document.body.appendChild(toast);
   }
   toast.textContent = message;
-  toast.classList.remove('opacity-0', 'translate-y-2', 'pointer-events-none');
+  toast.classList.remove('opacity-0', 'translate-y-2');
+  toast.classList.add('pointer-events-none');
   setTimeout(() => {
     toast.classList.add('opacity-0', 'translate-y-2', 'pointer-events-none');
   }, 3200);
@@ -1098,6 +1251,14 @@ function renderSetupFlow() {
     'How much can you comfortably set aside each month?',
     'How do you feel about market ups and downs?'
   ];
+
+  const scenarioKey = SCENARIO_RATES[state.selectedScenario] ? state.selectedScenario : 'middle';
+  const selectedScenario = SCENARIO_RATES[scenarioKey];
+  const monthlyNeeded = calculatePlanMonthlyNeeded(state.goalAmount, scenarioKey, state.timeHorizonYears);
+  const suggestedMonthly = monthlyNeeded === null ? null : roundMonthlyContributionUp(monthlyNeeded);
+  const canApplySuggestedMonthly = suggestedMonthly !== null &&
+    suggestedMonthly <= PLAN_INPUT_LIMITS.monthlyContribution.max &&
+    suggestedMonthly >= PLAN_INPUT_LIMITS.monthlyContribution.min;
 
   let stepHTML = '';
 
@@ -1199,7 +1360,7 @@ function renderSetupFlow() {
         <div class="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm space-y-5">
           <div class="flex items-center justify-between">
             <div>
-              <span class="text-xs font-semibold text-stone-500 uppercase">Monthly SIP Contribution</span>
+              <span class="text-xs font-semibold text-stone-500 uppercase">Monthly Contribution</span>
               <div class="text-3xl font-extrabold font-heading text-emerald-900 mt-1 tabular-nums">${formatINR(state.monthlyContribution)}<span class="text-base font-normal text-stone-500"> / month</span></div>
             </div>
             <div class="text-right">
@@ -1224,6 +1385,19 @@ function renderSetupFlow() {
                 ${formatINR(amt)}
               </button>
             `).join('')}
+          </div>
+
+          <div class="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs text-stone-700">
+            <p>
+              To reach ${formatINR(state.goalAmount)} in ${state.timeHorizonYears} years, the ${selectedScenario.name} example estimates about
+              <strong class="text-emerald-900">${formatINR(monthlyNeeded)} per month</strong>.
+              This is an illustrative estimate, not a guarantee.
+            </p>
+            ${state.monthlyContribution >= monthlyNeeded
+              ? `<p class="mt-2 font-semibold text-emerald-800">Your current amount already meets this estimate.</p>`
+              : canApplySuggestedMonthly
+                ? `<button type="button" onclick="setMonthlyContribution(${suggestedMonthly})" class="mt-3 px-3 py-2 rounded-lg bg-emerald-800 text-white font-semibold hover:bg-emerald-700">Use ${formatINR(suggestedMonthly)} per month</button>`
+                : `<p class="mt-2 text-amber-800">This is above the current monthly amount limit of ${formatINR(PLAN_INPUT_LIMITS.monthlyContribution.max)}. Try a lower goal or a longer time horizon.</p>`}
           </div>
         </div>
 
@@ -1296,10 +1470,11 @@ function renderSetupFlow() {
 function setupNextStep() {
   if (state.setupStep < 4) {
     state.setupStep++;
-    saveState();
+    persistPlan();
     renderSetupFlow();
     window.scrollTo({ top: 80, behavior: 'smooth' });
   } else {
+    persistPlan(true);
     navigateTo('scenarios');
   }
 }
@@ -1316,29 +1491,51 @@ function setupPrevStep() {
 }
 
 function setGoalAmount(amount) {
+  if (!validatePlanInput('goalAmount', amount)) {
+    const input = document.getElementById('custom-goal-input');
+    if (input) {
+      input.setCustomValidity('Enter a whole amount from ₹50,000 to ₹10,00,00,000 in ₹50,000 steps.');
+      input.reportValidity();
+    } else {
+      showToast('Choose a goal from ₹50,000 to ₹10,00,00,000.');
+    }
+    return;
+  }
+  const input = document.getElementById('custom-goal-input');
+  if (input) input.setCustomValidity('');
   state.goalAmount = amount;
-  saveState();
+  persistPlan();
   renderSetupFlow();
 }
 
 function setTimeHorizon(years) {
+  if (!validatePlanInput('timeHorizonYears', years)) {
+    showToast('Choose a time horizon from 3 to 15 years.');
+    return;
+  }
   state.timeHorizonYears = years;
-  saveState();
+  persistPlan();
   renderSetupFlow();
 }
 
 function setMonthlyContribution(amt) {
+  if (!validatePlanInput('monthlyContribution', amt)) {
+    showToast('Choose a monthly amount from ₹500 to ₹15,000 in ₹250 steps.');
+    return;
+  }
   state.monthlyContribution = amt;
-  saveState();
+  persistPlan();
   renderSetupFlow();
 }
 
 function setComfortLevel(level) {
+  if (!['low', 'moderate', 'high'].includes(level)) {
+    showToast('Choose one of the available risk-comfort options.');
+    return;
+  }
   state.comfortLevel = level;
-  if (level === 'low') state.selectedScenario = 'slower';
-  if (level === 'moderate') state.selectedScenario = 'middle';
-  if (level === 'high') state.selectedScenario = 'faster';
-  saveState();
+  state.selectedScenario = scenarioForComfort(level);
+  persistPlan();
   renderSetupFlow();
 }
 
@@ -1356,10 +1553,10 @@ function renderScenariosView() {
 
   const cardsHTML = scenarios.map(key => {
     const s = SCENARIO_RATES[key];
-    const estimatedTotal = calculateSIP(monthly, s.rate, years);
+    const estimatedTotal = calculatePlanSIP(monthly, key, years);
     const totalDeposited = monthly * years * 12;
     const estGrowth = Math.max(0, estimatedTotal - totalDeposited);
-    const yearsToGoal = calculateYearsToGoal(monthly, s.rate, goal);
+    const yearsToGoal = calculatePlanYearsToGoal(monthly, key, goal);
     const isSelected = (state.selectedScenario === key);
 
     return `
@@ -1396,7 +1593,7 @@ function renderScenariosView() {
             </div>
             <div class="flex items-center justify-between text-xs">
               <span class="text-stone-500">Est. Time to Reach ${formatLakhs(goal)}:</span>
-              <span class="font-bold text-emerald-800 text-sm tabular-nums">~${yearsToGoal} Years</span>
+              <span class="font-bold text-emerald-800 text-sm tabular-nums">${formatGoalTime(yearsToGoal)}</span>
             </div>
             <div class="flex items-center justify-between text-xs pt-1 border-t border-stone-200">
               <span class="text-stone-500">Typical Bad-Year Dip:</span>
@@ -1441,16 +1638,26 @@ function renderScenariosView() {
 }
 
 function updateScenariosContribution(val) {
-  state.monthlyContribution = Number(val);
-  saveState();
+  const amount = Number(val);
+  if (!validatePlanInput('monthlyContribution', amount)) {
+    showToast('Choose a monthly amount from ₹500 to ₹15,000.');
+    renderScenariosView();
+    return;
+  }
+  state.monthlyContribution = amount;
+  persistPlan();
   const sliderVal = document.getElementById('scenarios-monthly-val');
   if (sliderVal) sliderVal.textContent = formatINR(state.monthlyContribution);
   renderScenariosView();
 }
 
 function selectScenario(scenarioKey) {
+  if (!SCENARIO_RATES[scenarioKey]) {
+    showToast('That scenario is not available. Choose Slower, Middle, or Faster.');
+    return;
+  }
   state.selectedScenario = scenarioKey;
-  saveState();
+  persistPlan(true);
   renderScenariosView();
   navigateTo('receipt');
 }
@@ -1462,95 +1669,106 @@ function renderReceiptView() {
   const container = document.getElementById('receipt-content-container');
   if (!container) return;
 
-  const s = SCENARIO_RATES[state.selectedScenario];
+  const scenarioKey = SCENARIO_RATES[state.selectedScenario] ? state.selectedScenario : 'middle';
+  const s = SCENARIO_RATES[scenarioKey];
+  const planAllocation = PLAN_ALLOCATIONS[scenarioKey];
   const years = state.timeHorizonYears;
   const monthly = state.monthlyContribution;
   const goal = state.goalAmount;
-  const yearsToGoal = calculateYearsToGoal(monthly, s.rate, goal);
+  const totalContributions = monthly * Math.round(years * 12);
+  const estimatedValue = calculatePlanSIP(monthly, scenarioKey, years);
+  const estimatedGrowth = Math.max(0, estimatedValue - totalContributions);
+  const yearsToGoal = calculatePlanYearsToGoal(monthly, scenarioKey, goal);
+  const monthlyNeeded = calculatePlanMonthlyNeeded(goal, scenarioKey, years);
 
   container.innerHTML = `
-    <div class="max-w-2xl mx-auto bg-white rounded-3xl border border-stone-200 shadow-sm p-6 sm:p-10 relative overflow-hidden">
-      <div class="absolute -top-3 left-1/2 -translate-x-1/2 flex gap-1">
-        ${Array.from({ length: 18 }).map(() => '<span class="w-3 h-3 rounded-full bg-stone-100 border border-stone-200"></span>').join('')}
+    <div class="max-w-3xl mx-auto space-y-6">
+      <div>
+        <span class="text-xs font-semibold text-emerald-800 uppercase tracking-widest">My plan</span>
+        <h1 class="text-3xl font-bold font-heading text-stone-900 dark:text-stone-100 mt-1">Your plan, made simple</h1>
+        <p class="text-sm text-stone-600 dark:text-stone-300 mt-2">Your goal, monthly amount, and a simple example of what they could add up to.</p>
       </div>
 
-      <div class="flex items-center justify-between border-b border-stone-200 pb-5 mb-6 pt-2">
-        <div>
-          <span class="text-xs font-semibold text-emerald-800 uppercase tracking-widest">Plan Transparency Receipt</span>
-          <h2 class="text-2xl font-bold font-heading text-stone-900 mt-1">Why this plan framework?</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="p-5 rounded-2xl bg-white dark:bg-[#121F1B] border border-stone-200 dark:border-[#243B34]">
+          <span class="text-xs text-stone-500 dark:text-stone-400">Your goal</span>
+          <strong class="block text-xl font-bold text-stone-900 dark:text-stone-100 mt-1">${formatINR(goal)}</strong>
         </div>
-        <div class="text-right">
-          <span class="text-[11px] text-stone-400 block uppercase">Selected Mode</span>
-          <span class="text-sm font-bold text-stone-800">${s.name} (${s.title})</span>
+        <div class="p-5 rounded-2xl bg-white dark:bg-[#121F1B] border border-stone-200 dark:border-[#243B34]">
+          <span class="text-xs text-stone-500 dark:text-stone-400">Your monthly amount</span>
+          <strong class="block text-xl font-bold text-stone-900 dark:text-stone-100 mt-1">${formatINR(monthly)} / month</strong>
         </div>
-      </div>
-
-      <div class="space-y-4 mb-8">
-        <h3 class="text-xs font-bold text-stone-500 uppercase tracking-wider">How your choices shaped this:</h3>
-        
-        <div class="p-4 rounded-xl bg-stone-50 border border-stone-200 flex items-start gap-3">
-          <div class="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">1</div>
-          <div class="text-xs sm:text-sm text-stone-700">
-            <strong class="font-semibold text-stone-900">You chose a ${years}-year timeline.</strong>
-            ${years >= 7 
-              ? 'This is a healthy horizon for an undergraduate. It gives time for temporary market downturns to play out without forcing you to sell at a loss.'
-              : 'A shorter horizon of under 5 years means preserving capital matters more, as there is less time to recover from a sharp market correction.'}
-          </div>
+        <div class="p-5 rounded-2xl bg-white dark:bg-[#121F1B] border border-stone-200 dark:border-[#243B34]">
+          <span class="text-xs text-stone-500 dark:text-stone-400">Time you chose</span>
+          <strong class="block text-xl font-bold text-stone-900 dark:text-stone-100 mt-1">${years} years</strong>
         </div>
-
-        <div class="p-4 rounded-xl bg-stone-50 border border-stone-200 flex items-start gap-3">
-          <div class="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">2</div>
-          <div class="text-xs sm:text-sm text-stone-700">
-            <strong class="font-semibold text-stone-900">You declared "${state.comfortLevel.toUpperCase()}" comfort with ups & downs.</strong>
-            ${state.comfortLevel === 'low' 
-              ? 'The Slower framework avoids high-equity volatility so you do not experience stress during exam periods.'
-              : state.comfortLevel === 'moderate'
-              ? 'The Middle framework uses broad index exposure, accepting normal 15-18% seasonal market dips for steady compound growth.'
-              : 'The Faster framework embraces sharper 25-30% dips in pursuit of higher long-term compounding.'}
-          </div>
-        </div>
-
-        <div class="p-4 rounded-xl bg-stone-50 border border-stone-200 flex items-start gap-3">
-          <div class="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">3</div>
-          <div class="text-xs sm:text-sm text-stone-700">
-            <strong class="font-semibold text-stone-900">Changing your contribution changes the estimate directly.</strong>
-            At ${formatINR(monthly)}/month, you are on track to reach ${formatLakhs(goal)} in approximately <span class="font-bold text-emerald-800 tabular-nums">~${yearsToGoal} years</span>. Adding even ₹1,000/month after your first internship would accelerate this by roughly ~${(yearsToGoal * 0.22).toFixed(1)} years.
-          </div>
+        <div class="p-5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900">
+          <span class="text-xs text-emerald-800 dark:text-emerald-300">Illustrative value after ${years} years</span>
+          <strong class="block text-xl font-bold text-emerald-950 dark:text-emerald-100 mt-1">${formatINR(estimatedValue)}</strong>
         </div>
       </div>
 
-      <div class="p-5 rounded-2xl bg-amber-50/80 border border-amber-200 mb-8 space-y-2">
-        <div class="flex items-center gap-2 text-amber-900 font-bold text-xs sm:text-sm">
-          <svg class="w-4 h-4 text-amber-700 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-          <span>What this educational plan CANNOT know:</span>
+      <div class="p-5 sm:p-6 rounded-2xl bg-white dark:bg-[#121F1B] border border-stone-200 dark:border-[#243B34] space-y-4">
+        <h2 class="text-lg font-bold text-stone-900 dark:text-stone-100">How the estimate is worked out</h2>
+        <p class="text-sm text-stone-600 dark:text-stone-300">If you add ${formatINR(monthly)} each month for ${years} years:</p>
+        <div class="space-y-3 text-sm">
+          <div class="flex justify-between gap-4"><span class="text-stone-600 dark:text-stone-300">You would add</span><strong class="text-stone-900 dark:text-stone-100">${formatINR(totalContributions)}</strong></div>
+          <div class="flex justify-between gap-4"><span class="text-stone-600 dark:text-stone-300">Possible growth in this example</span><strong class="text-stone-900 dark:text-stone-100">${formatINR(estimatedGrowth)}</strong></div>
+          <div class="flex justify-between gap-4 border-t border-stone-200 dark:border-[#243B34] pt-3"><span class="text-stone-600 dark:text-stone-300">Estimated time to your goal at this pace</span><strong class="text-emerald-800 dark:text-emerald-300">${formatGoalTime(yearsToGoal)}</strong></div>
         </div>
-        <ul class="text-xs text-amber-900/90 space-y-1.5 list-disc pl-5">
-          <li><strong>Future Market Returns:</strong> Stock markets never deliver smooth year-on-year returns. Actual returns may be lower, higher, or negative for multi-year stretches.</li>
-          <li><strong>Inflation in India:</strong> While ₹10 Lakhs is a substantial sum today, purchasing power will decline with inflation over the next decade.</li>
-          <li><strong>Your Real Life Surprises:</strong> Emergency medical needs, semester backlogs, or unexpected job transitions take precedence over rigid investment goals.</li>
-        </ul>
+        <div class="flex justify-between gap-4 border-t border-stone-200 dark:border-[#243B34] pt-3 text-sm">
+          <span class="text-stone-600 dark:text-stone-300">To reach ${formatINR(goal)} in ${years} years, save about</span>
+          <strong class="text-emerald-800 dark:text-emerald-300">${formatINR(monthlyNeeded)} / month</strong>
+        </div>
+        <p class="text-sm font-medium ${estimatedValue < goal ? 'text-amber-800 dark:text-amber-300' : 'text-emerald-800 dark:text-emerald-300'}">
+          ${monthlyNeeded > monthly
+            ? `At ${formatINR(monthly)} per month, the example reaches ${formatINR(estimatedValue)} by year ${years}, which is ${formatINR(goal - estimatedValue)} short of your goal. About ${formatINR(monthlyNeeded)} per month is needed to meet the chosen timeline under the same assumptions.`
+            : `At ${formatINR(monthly)} per month, the example reaches ${formatINR(estimatedValue)} by year ${years}, enough to meet this goal under the same assumptions.`}
+        </p>
+        <p class="text-xs leading-relaxed text-stone-500 dark:text-stone-400">This illustrative example estimates category growth separately, then adds the results using the selected ${s.name} plan's percentages. It assumes yearly growth of 15% for equity, 7% for debt, and 8% for gold, with monthly contributions added at the end of each month. These assumptions are examples only; actual returns can be higher or lower, including losses. Fees, taxes, and inflation are not included.</p>
       </div>
+
+      <details class="p-5 rounded-2xl bg-white dark:bg-[#121F1B] border border-stone-200 dark:border-[#243B34]">
+        <summary class="cursor-pointer font-bold text-stone-900 dark:text-stone-100">Understand this mix</summary>
+        <p class="text-xs text-stone-600 dark:text-stone-300 mt-3">${planAllocation.name}: these percentages are an educational example you selected, not a personalized recommendation or an actual portfolio. If your monthly amount were divided this way, the sample amounts would be:</p>
+        <div class="space-y-3 mt-3">
+          ${planAllocation.allocations.map(item => `
+            <div class="p-3 rounded-xl bg-stone-50 dark:bg-[#162621] border border-stone-200 dark:border-[#243B34]">
+              <div class="flex justify-between gap-3 text-sm">
+                <strong class="text-stone-900 dark:text-stone-100">${item.category} (${item.percent}%)</strong>
+                <strong class="shrink-0 text-stone-900 dark:text-stone-100">${formatINR(Math.round(monthly * item.percent / 100))} / month</strong>
+              </div>
+              <p class="text-xs text-stone-500 dark:text-stone-400 mt-1">Illustrative yearly growth assumption: ${item.annualRatePct}%</p>
+              <p class="text-xs text-stone-600 dark:text-stone-300 mt-1">${item.description}</p>
+              <p class="text-xs text-amber-800 dark:text-amber-300 mt-1"><strong>Risk:</strong> ${item.risk}</p>
+            </div>
+          `).join('')}
+        </div>
+        <p class="text-xs text-stone-500 dark:text-stone-400 mt-3">The examples do not identify specific products, and the percentages are not instructions to invest.</p>
+      </details>
+
+      <p class="text-xs text-stone-500 dark:text-stone-400">For learning only—not a promise or financial advice. Real returns vary, and life changes can affect how much you save.</p>
 
       <div class="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-stone-200 dark:border-[#1F332C]">
         <button type="button" onclick="editAnswersFromReceipt()"
           class="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-stone-300 dark:border-stone-700 text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-[#162621] font-semibold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5">
           <svg class="w-4 h-4 text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
-          <span>Edit my answers</span>
+          <span>Change my choices</span>
         </button>
 
         <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
           <button type="button" onclick="downloadPlanPDF()"
             class="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-forest-900 hover:bg-forest-800 dark:bg-emerald-700 dark:hover:bg-emerald-600 text-white font-semibold text-xs sm:text-sm transition-all shadow-sm flex items-center justify-center gap-2">
             <svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-            <span>Download plan as PDF</span>
+            <span>Download plan</span>
           </button>
           <button type="button" onclick="navigateTo('dip')"
             class="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50 font-semibold text-xs sm:text-sm transition-all">
-            Market Dip →
+            Try a market dip
           </button>
           <button type="button" onclick="navigateTo('dashboard')"
             class="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-800 dark:bg-emerald-600 text-white hover:bg-emerald-700 font-semibold text-xs sm:text-sm transition-all shadow-sm">
-            View Dashboard
+            See my progress
           </button>
         </div>
       </div>
@@ -1570,17 +1788,30 @@ function renderDashboardView() {
   const container = document.getElementById('dashboard-content');
   if (!container) return;
 
-  const s = SCENARIO_RATES[state.selectedScenario];
+  const scenarioKey = PLAN_ALLOCATIONS[state.selectedScenario] ? state.selectedScenario : 'middle';
+  const s = SCENARIO_RATES[scenarioKey];
+  const selectedAllocation = PLAN_ALLOCATIONS[scenarioKey];
   const monthly = state.monthlyContribution;
   const years = state.timeHorizonYears;
   const goal = state.goalAmount;
 
-  const monthsIn = state.simulatedMonthsElapsed;
-  const currentActualInvested = monthly * monthsIn;
-  const currentEstimatedValue = calculateSIP(monthly, s.rate, monthsIn / 12);
+  const monthsIn = Math.min(state.simulatedMonthsElapsed, years * 12);
+  const currentEstimatedValue = calculatePlanSIP(monthly, scenarioKey, monthsIn / 12);
   const progressPercent = Math.min(100, Math.round((currentEstimatedValue / goal) * 100));
   const amountRemaining = Math.max(0, goal - currentEstimatedValue);
-  const remainingYears = Math.max(0, (calculateYearsToGoal(monthly, s.rate, goal) - (monthsIn / 12))).toFixed(1);
+  const remainingYears = calculatePlanYearsToGoal(monthly, scenarioKey, goal, currentEstimatedValue);
+  const monthlyNeeded = calculatePlanMonthlyNeeded(goal, scenarioKey, years);
+  const targetMonthlyContribution = monthlyNeeded === null ? null : roundMonthlyContributionUp(monthlyNeeded);
+  const targetBalanceAtMonth = targetMonthlyContribution === null
+    ? 0
+    : calculatePlanSIP(targetMonthlyContribution, scenarioKey, monthsIn / 12);
+  const paceDifference = currentEstimatedValue - targetBalanceAtMonth;
+  const previousEstimatedValue = calculatePlanSIP(monthly, scenarioKey, Math.max(0, monthsIn - 1) / 12);
+  const modeledMonthlyGrowth = Math.round(currentEstimatedValue - previousEstimatedValue - (monthsIn > 0 ? monthly : 0));
+  const previousGoalTime = calculatePlanYearsToGoal(monthly, scenarioKey, goal, previousEstimatedValue);
+  const daysCloser = previousGoalTime === null || remainingYears === null
+    ? null
+    : Math.max(0, Math.round((previousGoalTime - remainingYears) * 365));
 
   const m25 = goal * 0.25;
   const m50 = goal * 0.50;
@@ -1591,15 +1822,29 @@ function renderDashboardView() {
   const passed50 = currentEstimatedValue >= m50;
   const passed75 = currentEstimatedValue >= m75;
 
-  const slowerFV = calculateSIP(monthly, SCENARIO_RATES.slower.rate, years);
-  const middleFV = calculateSIP(monthly, SCENARIO_RATES.middle.rate, years);
-  const fasterFV = calculateSIP(monthly, SCENARIO_RATES.faster.rate, years);
-
-  const boost = state.whatIfContributionBoost;
-  const boostedMonthly = monthly + boost;
-  const normalYearsTotal = parseFloat(calculateYearsToGoal(monthly, s.rate, goal));
-  const boostedYearsTotal = parseFloat(calculateYearsToGoal(boostedMonthly, s.rate, goal));
-  const yearsSaved = Math.max(0, (normalYearsTotal - boostedYearsTotal)).toFixed(1);
+  const slowerFV = calculatePlanSIP(monthly, 'slower', years);
+  const middleFV = calculatePlanSIP(monthly, 'middle', years);
+  const fasterFV = calculatePlanSIP(monthly, 'faster', years);
+  const totalContributions = monthly * Math.round(years * 12);
+  const selectedPlanValue = calculatePlanSIP(monthly, scenarioKey, years);
+  const selectedPlanGrowth = Math.max(0, selectedPlanValue - totalContributions);
+  const chartMonths = Math.max(1, Math.round(years * 12));
+  const makeProjectionPath = (key) => Array.from({ length: chartMonths + 1 }, (_, month) => {
+    const x = 10 + (580 * month) / chartMonths;
+    const value = calculatePlanSIP(monthly, key, month / 12);
+    const y = 220 - (185 * Math.min(value, goal)) / Math.max(goal, 1);
+    return `${month === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
+  }).join(' ');
+  const slowerPath = makeProjectionPath('slower');
+  const middlePath = makeProjectionPath('middle');
+  const fasterPath = makeProjectionPath('faster');
+  const selectedValue = {
+    slower: slowerFV,
+    middle: middleFV,
+    faster: fasterFV
+  }[state.selectedScenario];
+  const selectedY = 220 - (185 * Math.min(selectedValue, goal)) / Math.max(goal, 1);
+  const chartYears = [...new Set([0, Math.round(years / 3), Math.round((years * 2) / 3), years])];
 
   container.innerHTML = `
     <div class="max-w-6xl mx-auto space-y-8">
@@ -1610,12 +1855,12 @@ function renderDashboardView() {
           <div class="flex items-center gap-2 mb-1">
             <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold">
               <span class="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
-              Active Plan
+              Your saved plan
             </span>
             <span class="text-xs text-stone-500">${state.user.name} • ${state.user.college}</span>
           </div>
           <h1 class="text-2xl sm:text-3xl font-bold font-heading text-stone-900">
-            Goal Roadmap: ${formatLakhs(goal)} Milestone
+            Your goal: ${formatLakhs(goal)}
           </h1>
         </div>
 
@@ -1630,7 +1875,7 @@ function renderDashboardView() {
           </button>
           <button type="button" onclick="navigateTo('receipt')" class="px-3.5 py-2 rounded-xl border border-stone-300 dark:border-stone-700 text-stone-700 dark:text-stone-200 bg-white dark:bg-[#162621] hover:bg-stone-50 dark:hover:bg-[#1B2F29] font-semibold text-xs transition-all shadow-sm flex items-center gap-1.5">
             <svg class="w-4 h-4 text-stone-500 dark:text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-            <span>“Why this plan?” Receipt</span>
+            <span>My plan details</span>
           </button>
           <button type="button" onclick="navigateTo('dip')" class="px-3.5 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50 font-semibold text-xs transition-all flex items-center gap-1.5">
             <svg class="w-4 h-4 text-amber-700 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"></path></svg>
@@ -1639,35 +1884,31 @@ function renderDashboardView() {
         </div>
       </div>
 
-      <!-- PRIMARY ANSWER: “HOW CLOSE AM I, AND WHAT COULD HELP ME REACH MY GOAL?” -->
+      <!-- PRIMARY ANSWER: “HOW CLOSE AM I TO MY GOAL?” -->
       <div class="bg-white rounded-3xl border border-stone-200 p-6 sm:p-8 shadow-sm space-y-6">
         <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-4 border-b border-stone-100">
           <div>
-            <span class="text-xs font-bold text-emerald-800 uppercase tracking-widest">Progress Assessment</span>
+            <span class="text-xs font-bold text-emerald-800 uppercase tracking-widest">Your goal at a glance</span>
             <h2 class="text-2xl sm:text-3xl font-bold font-heading text-stone-900 mt-1">
-              How close are you to ${formatLakhs(goal)}?
+              Your goal is ${formatLakhs(goal)}
             </h2>
             <p class="text-stone-600 text-xs sm:text-sm mt-1 max-w-xl">
-              You are currently <strong class="text-stone-900 font-semibold">${progressPercent}% of the way</strong> in estimated value, with <strong class="text-stone-900 font-semibold">${formatINR(amountRemaining)} remaining</strong>. Compounding typically feels gradual in the first 24 months before visibly steepening.
+              This is an example, not money in an account. If you save <strong class="text-stone-900 font-semibold">${formatINR(monthly)} each month</strong>, the estimate is ${formatGoalTime(remainingYears)} to reach your goal. Real results can be different.
             </p>
           </div>
 
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs shrink-0">
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs shrink-0">
             <div class="p-3 rounded-xl bg-stone-50 border border-stone-200">
-              <span class="text-stone-500 block text-[11px]">Goal Target:</span>
+              <span class="text-stone-500 block text-[11px]">Goal:</span>
               <span class="font-bold text-stone-900 text-sm tabular-nums">${formatINR(goal)}</span>
             </div>
             <div class="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
-              <span class="text-emerald-800 block text-[11px]">Estimated Progress:</span>
+              <span class="text-emerald-800 block text-[11px]">Example amount so far:</span>
               <span class="font-bold text-emerald-950 text-sm tabular-nums">${formatINR(currentEstimatedValue)}</span>
             </div>
             <div class="p-3 rounded-xl bg-stone-50 border border-stone-200">
-              <span class="text-stone-500 block text-[11px]">Amount Remaining:</span>
+              <span class="text-stone-500 block text-[11px]">Still needed:</span>
               <span class="font-bold text-stone-800 text-sm tabular-nums">${formatINR(amountRemaining)}</span>
-            </div>
-            <div class="p-3 rounded-xl bg-stone-50 border border-stone-200">
-              <span class="text-stone-500 block text-[11px]">Est. Time Remaining:</span>
-              <span class="font-bold text-emerald-800 text-sm tabular-nums">~${remainingYears} Yrs</span>
             </div>
           </div>
         </div>
@@ -1675,8 +1916,24 @@ function renderDashboardView() {
         <!-- MILESTONE CHECKPOINTS: 25%, 50%, 75%, 100% -->
         <div class="space-y-4">
           <div class="flex items-center justify-between text-xs font-semibold text-stone-700">
-            <span>Milestones along the way:</span>
-            <span class="text-emerald-800 font-bold tabular-nums">${progressPercent}% Reached (Month ${monthsIn} of ${years * 12})</span>
+            <span>Steps toward your goal:</span>
+            <span class="text-emerald-800 font-bold tabular-nums">${progressPercent}% in this example (Month ${monthsIn} of ${years * 12})</span>
+          </div>
+
+          <div class="p-4 rounded-xl ${monthly >= monthlyNeeded ? 'bg-emerald-50 border border-emerald-200' : 'bg-amber-50 border border-amber-200'} text-xs">
+            <p class="${monthly >= monthlyNeeded ? 'text-emerald-900' : 'text-amber-900'}">
+              ${monthly >= monthlyNeeded
+                ? `On pace in this illustration: ${formatINR(monthly)} per month meets the estimated ${formatINR(monthlyNeeded)} needed to reach your goal in ${years} years.`
+                : `Behind the selected timeline in this illustration: about ${formatINR(monthlyNeeded)} per month is needed to reach your goal in ${years} years. Your current amount is ${formatINR(monthlyNeeded - monthly)} per month below that estimate.`}
+            </p>
+            <p class="mt-1 text-stone-600">
+              By month ${monthsIn}, the example pace is ${formatINR(targetBalanceAtMonth)}; your current example is ${paceDifference >= 0 ? `${formatINR(paceDifference)} ahead` : `${formatINR(Math.abs(paceDifference))} behind`}.
+            </p>
+            ${targetMonthlyContribution > PLAN_INPUT_LIMITS.monthlyContribution.max
+              ? `<p class="mt-1 text-amber-800">The required amount is above the current monthly input limit of ${formatINR(PLAN_INPUT_LIMITS.monthlyContribution.max)}. Try a lower goal or a longer timeline.</p>`
+              : monthly < monthlyNeeded
+                ? `<button type="button" onclick="editMonthlyContribution()" class="mt-2 font-semibold underline underline-offset-2 text-amber-900">Adjust monthly amount</button>`
+                : ''}
           </div>
 
           <div class="relative py-4">
@@ -1708,19 +1965,19 @@ function renderDashboardView() {
           <div class="grid grid-cols-4 gap-2 text-center text-[11px] pt-1">
             <div class="space-y-0.5">
               <span class="font-bold text-stone-900 block">25% (${formatLakhs(m25)})</span>
-              <span class="text-stone-500 block text-[10px]">First Safety Net</span>
+              <span class="text-stone-500 block text-[10px]">First quarter</span>
             </div>
             <div class="space-y-0.5">
               <span class="font-bold text-stone-900 block">50% (${formatLakhs(m50)})</span>
-              <span class="text-stone-500 block text-[10px]">Compounding Pivot</span>
+              <span class="text-stone-500 block text-[10px]">Halfway</span>
             </div>
             <div class="space-y-0.5">
               <span class="font-bold text-stone-900 block">75% (${formatLakhs(m75)})</span>
-              <span class="text-stone-500 block text-[10px]">Home Stretch</span>
+              <span class="text-stone-500 block text-[10px]">Nearly there</span>
             </div>
             <div class="space-y-0.5">
               <span class="font-bold text-amber-900 block">100% (${formatLakhs(m100)})</span>
-              <span class="text-stone-500 block text-[10px]">Milestone Reached</span>
+              <span class="text-stone-500 block text-[10px]">Goal reached</span>
             </div>
           </div>
         </div>
@@ -1730,76 +1987,80 @@ function renderDashboardView() {
           <div class="flex items-start gap-2.5">
             <span class="w-2.5 h-2.5 rounded-full bg-emerald-600 mt-1 shrink-0"></span>
             <div>
-              <span class="font-bold text-stone-900 block">What changed since your last monthly check-in (${state.lastCheckinDelta.date})?</span>
+              <span class="font-bold text-stone-900 block">How does the example change each month?</span>
               <span class="text-stone-600 block mt-0.5">
-                You deposited <strong class="text-stone-800 font-semibold">+₹${state.lastCheckinDelta.deposited.toLocaleString('en-IN')}</strong> on schedule. Market price variations added <strong class="text-emerald-800 font-semibold">+₹${state.lastCheckinDelta.marketGain}</strong> in estimated value, bringing your estimated completion date <strong class="text-stone-900 font-semibold">~${state.lastCheckinDelta.daysCloser} days closer</strong>.
+                The example adds <strong class="text-stone-800 font-semibold">${formatINR(monthsIn > 0 ? monthly : 0)}</strong> saved and assumes the market changes by <strong class="text-emerald-800 font-semibold">${modeledMonthlyGrowth >= 0 ? '+' : '−'}${formatINR(Math.abs(modeledMonthlyGrowth))}</strong>. This is a calculation only—not an update to a real account${daysCloser === null ? '.' : `; in this example, the goal date moves about <strong class="text-stone-900 font-semibold">${daysCloser} days closer</strong>`}.
               </span>
             </div>
           </div>
           <span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-semibold whitespace-nowrap">
-            Steady Pace
+            Example only
           </span>
         </div>
 
-        <!-- WHAT COULD HELP ME REACH MY GOAL SOONER? -->
-        <div class="p-5 rounded-2xl bg-teal-50/60 border border-teal-200 space-y-4">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <span class="text-xs font-bold text-teal-900 uppercase tracking-wider">What could help you reach your goal sooner?</span>
-              <h3 class="text-base font-bold text-stone-900">Explore adding an internship / job top-up</h3>
-            </div>
-            <span class="text-xs font-bold text-emerald-800 bg-white px-3 py-1 rounded-xl border border-teal-200 tabular-nums">
-              +${formatINR(boost)}/mo extra = ~${yearsSaved} Years Saved!
-            </span>
-          </div>
-
-          <div class="space-y-2">
-            <input type="range" min="0" max="5000" step="500" value="${boost}"
-              oninput="updateWhatIfBoost(this.value)"
-              class="w-full accent-teal-800 cursor-pointer" />
-            <div class="flex justify-between text-[11px] text-stone-500">
-              <span>+₹0 (Current ${formatINR(monthly)})</span>
-              <span>+₹1,000 (Campus Freelance)</span>
-              <span>+₹3,000 (Junior Salary)</span>
-              <span>+₹5,000 (Senior Step-Up)</span>
-            </div>
-          </div>
-
-          <p class="text-xs text-stone-600 leading-relaxed">
-            ${boost === 0 
-              ? 'Move the slider above to preview how a small post-graduation salary step-up accelerates your compounding runway.'
-              : `If you step up your contribution from ${formatINR(monthly)} to ${formatINR(boostedMonthly)}/month, your estimated timeline to reach ${formatLakhs(goal)} drops from <strong>${normalYearsTotal} years</strong> down to <strong>~${boostedYearsTotal} years</strong> (saving ~${yearsSaved} years of waiting).`}
-          </p>
-        </div>
       </div>
+
+      <section class="bg-white rounded-3xl border border-stone-200 p-6 sm:p-8 shadow-sm space-y-5" aria-labelledby="monthly-breakdown-title">
+        <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+          <div>
+            <span class="text-xs font-semibold text-emerald-800 uppercase tracking-wider">Educational example only</span>
+            <h2 id="monthly-breakdown-title" class="text-xl sm:text-2xl font-bold font-heading text-stone-900 mt-1">Monthly breakdown: ${selectedAllocation.name}</h2>
+            <p class="text-xs sm:text-sm text-stone-600 mt-1">You selected this example plan. These percentages are for learning, not a personalized recommendation.</p>
+          </div>
+          <span class="text-sm font-semibold text-stone-700 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2">${formatINR(monthly)} per month</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          ${selectedAllocation.allocations.map(item => `
+            <div class="p-4 rounded-2xl bg-stone-50 border border-stone-200">
+              <div class="flex items-center justify-between gap-3">
+                <strong class="text-sm text-stone-900">${item.category}</strong>
+                <span class="text-xs font-semibold text-emerald-800">${item.percent}%</span>
+              </div>
+              <strong class="block text-lg text-stone-900 tabular-nums mt-2">${formatINR(Math.round(monthly * item.percent / 100))}<span class="text-xs font-medium text-stone-500"> / month</span></strong>
+              <p class="text-xs leading-relaxed text-stone-500 mt-1">Example growth assumption: ${item.annualRatePct}% yearly</p>
+              <p class="text-xs leading-relaxed text-stone-600 mt-2">${item.description}</p>
+              <p class="text-xs leading-relaxed text-amber-800 mt-2"><strong>Risk:</strong> ${item.risk}</p>
+            </div>
+          `).join('')}
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 border-t border-stone-100 pt-4 text-xs">
+          <div><span class="block text-stone-500">Total added in ${years} years</span><strong class="block text-stone-900 tabular-nums mt-1">${formatINR(totalContributions)}</strong></div>
+          <div><span class="block text-stone-500">Estimated growth in this example</span><strong class="block text-emerald-800 tabular-nums mt-1">${formatINR(selectedPlanGrowth)}</strong></div>
+          <div><span class="block text-stone-500">Illustrative value after ${years} years</span><strong class="block text-stone-900 tabular-nums mt-1">${formatINR(selectedPlanValue)}</strong></div>
+        </div>
+
+        <p class="text-xs leading-relaxed text-stone-600 border-t border-stone-100 pt-4">SIP (Systematic Investment Plan) is a way to contribute regularly; it is not a separate investment category. This example does not place trades or invest money.</p>
+      </section>
 
       <!-- MULTI-PATH PROJECTION CHART SECTION -->
       <div class="bg-white rounded-3xl border border-stone-200 p-6 sm:p-8 shadow-sm space-y-6">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <span class="text-xs font-semibold text-emerald-800 uppercase tracking-wider">Multi-Path Projection</span>
-            <h2 class="text-xl sm:text-2xl font-bold font-heading text-stone-900 mt-0.5">Three Possible Futures (Not Guaranteed)</h2>
-            <p class="text-xs sm:text-sm text-stone-500 mt-1">Compare how the three different asset paths compound towards your ₹${(goal / 100000).toFixed(0)} Lakh milestone over ${years} years.</p>
+            <span class="text-xs font-semibold text-emerald-800 uppercase tracking-wider">Example growth</span>
+            <h2 class="text-xl sm:text-2xl font-bold font-heading text-stone-900 mt-0.5">Three ways the estimate could look</h2>
+            <p class="text-xs sm:text-sm text-stone-500 mt-1">Compare your monthly saving over ${years} years. The percentages are assumed yearly growth, not promises.</p>
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
             <button type="button" onclick="quickSwitchScenario('slower')" class="px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${state.selectedScenario === 'slower' ? 'bg-stone-800 text-white border-stone-800' : 'bg-stone-50 text-stone-600 border-stone-200'}">
-              Slower (6-8%)
+              Slower (~9.5%)
             </button>
             <button type="button" onclick="quickSwitchScenario('middle')" class="px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${state.selectedScenario === 'middle' ? 'bg-emerald-800 text-white border-emerald-800' : 'bg-stone-50 text-stone-600 border-stone-200'}">
-              Middle (10-12%)
+              Middle (~11.6%)
             </button>
             <button type="button" onclick="quickSwitchScenario('faster')" class="px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${state.selectedScenario === 'faster' ? 'bg-amber-800 text-white border-amber-800' : 'bg-stone-50 text-stone-600 border-stone-200'}">
-              Faster (13-15%)
+              Faster (~13.4%)
             </button>
           </div>
         </div>
 
         <div class="relative w-full h-72 sm:h-80 bg-stone-50/50 rounded-2xl border border-stone-100 p-4 flex flex-col justify-between overflow-hidden">
-          <div class="absolute inset-x-4 top-8 border-b border-stone-200/60 flex justify-between text-[10px] text-stone-400">
+          <div class="absolute inset-x-4 top-[15%] border-b border-stone-200/60 flex justify-between text-[10px] text-stone-400">
             <span>Goal: ${formatLakhs(goal)}</span>
           </div>
-          <div class="absolute inset-x-4 top-1/2 border-b border-stone-200/40 flex justify-between text-[10px] text-stone-400">
+          <div class="absolute inset-x-4 top-[54%] border-b border-stone-200/40 flex justify-between text-[10px] text-stone-400">
             <span>Midpoint: ${formatLakhs(goal / 2)}</span>
           </div>
           <div class="absolute inset-x-4 bottom-8 border-b border-stone-200/60 flex justify-between text-[10px] text-stone-400">
@@ -1815,22 +2076,19 @@ function renderDashboardView() {
             </defs>
 
             <line x1="0" y1="35" x2="600" y2="35" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="4 4" />
-            <path d="M 10 220 Q 200 200, 350 170 T 590 120" fill="none" stroke="#64748B" stroke-width="${state.selectedScenario === 'slower' ? '3.5' : '1.8'}" stroke-dasharray="${state.selectedScenario === 'slower' ? '0' : '3 3'}" class="transition-all" />
-            <path d="M 10 220 Q 220 185, 360 130 T 590 60" fill="none" stroke="#047857" stroke-width="${state.selectedScenario === 'middle' ? '3.5' : '1.8'}" stroke-dasharray="${state.selectedScenario === 'middle' ? '0' : '3 3'}" class="transition-all" />
-            <path d="M 10 220 Q 240 170, 370 100 T 590 25" fill="none" stroke="#D97706" stroke-width="${state.selectedScenario === 'faster' ? '3.5' : '1.8'}" stroke-dasharray="${state.selectedScenario === 'faster' ? '0' : '3 3'}" class="transition-all" />
+            <path d="${slowerPath}" fill="none" stroke="#64748B" stroke-width="${state.selectedScenario === 'slower' ? '3.5' : '1.8'}" stroke-dasharray="${state.selectedScenario === 'slower' ? '0' : '3 3'}" class="transition-all" />
+            <path d="${middlePath}" fill="none" stroke="#047857" stroke-width="${state.selectedScenario === 'middle' ? '3.5' : '1.8'}" stroke-dasharray="${state.selectedScenario === 'middle' ? '0' : '3 3'}" class="transition-all" />
+            <path d="${fasterPath}" fill="none" stroke="#D97706" stroke-width="${state.selectedScenario === 'faster' ? '3.5' : '1.8'}" stroke-dasharray="${state.selectedScenario === 'faster' ? '0' : '3 3'}" class="transition-all" />
 
             ${state.selectedScenario === 'middle' ? `
-              <path d="M 10 220 Q 220 185, 360 130 T 590 60 L 590 220 L 10 220 Z" fill="url(#areaGrad)" />
+              <path d="${middlePath} L 590 220 L 10 220 Z" fill="url(#areaGrad)" />
             ` : ''}
 
-            <circle cx="590" cy="${state.selectedScenario === 'slower' ? 120 : state.selectedScenario === 'middle' ? 60 : 25}" r="6" fill="#064E3B" stroke="#FAF8F5" stroke-width="2" />
+            <circle cx="590" cy="${selectedY}" r="6" fill="#064E3B" stroke="#FAF8F5" stroke-width="2" />
           </svg>
 
           <div class="flex justify-between text-[11px] text-stone-400 pt-2 border-t border-stone-200">
-            <span>Year 0 (Today)</span>
-            <span>Year 2 (Early Career)</span>
-            <span>Year 5 (Graduation + 3Yrs)</span>
-            <span>Year ${years} (Milestone Horizon)</span>
+            ${chartYears.map((year, index) => `<span>${year === 0 ? 'Today' : `Year ${year}`}${index === chartYears.length - 1 && year > 0 ? ' (Goal date)' : ''}</span>`).join('')}
           </div>
         </div>
 
@@ -1838,24 +2096,24 @@ function renderDashboardView() {
           <div class="p-3 rounded-xl bg-stone-50 border border-stone-200 flex items-center gap-3">
             <span class="w-3 h-3 rounded-full bg-stone-500 shrink-0"></span>
             <div>
-              <span class="font-semibold text-stone-800">Slower Path:</span>
-              <span class="text-stone-500 block tabular-nums">Est. ${formatINR(slowerFV)}</span>
+                <span class="font-semibold text-stone-800">${state.selectedScenario === 'slower' ? 'Slower example (selected):' : 'Slower example:'}</span>
+                <span class="text-stone-500 block tabular-nums">Example value: ${formatINR(slowerFV)}</span>
             </div>
           </div>
 
           <div class="p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center gap-3">
             <span class="w-3 h-3 rounded-full bg-emerald-700 shrink-0"></span>
             <div>
-              <span class="font-semibold text-emerald-950">Middle Path (Selected):</span>
-              <span class="text-emerald-800 block font-bold tabular-nums">Est. ${formatINR(middleFV)}</span>
+              <span class="font-semibold text-emerald-950">${state.selectedScenario === 'middle' ? 'Middle example (selected):' : 'Middle example:'}</span>
+              <span class="text-emerald-800 block font-bold tabular-nums">Example value: ${formatINR(middleFV)}</span>
             </div>
           </div>
 
           <div class="p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-center gap-3">
             <span class="w-3 h-3 rounded-full bg-amber-600 shrink-0"></span>
             <div>
-              <span class="font-semibold text-amber-950">Faster Path:</span>
-              <span class="text-amber-800 block tabular-nums">Est. ${formatINR(fasterFV)}</span>
+              <span class="font-semibold text-amber-950">${state.selectedScenario === 'faster' ? 'Faster example (selected):' : 'Faster example:'}</span>
+              <span class="text-amber-800 block tabular-nums">Example value: ${formatINR(fasterFV)}</span>
             </div>
           </div>
         </div>
@@ -1865,13 +2123,13 @@ function renderDashboardView() {
       <div class="bg-gradient-to-r from-emerald-900 to-emerald-950 text-white rounded-3xl p-6 sm:p-8 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div class="space-y-2 max-w-xl">
           <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-800/80 text-emerald-200 text-xs font-semibold tracking-wide uppercase">
-            One Practical Next Step
+            A simple first step
           </span>
           <h3 class="text-xl sm:text-2xl font-bold font-heading">
-            Build your ₹5,000 "Chai & Semester Emergency Stash" first.
+            Set aside money for unexpected expenses first.
           </h3>
           <p class="text-emerald-100/80 text-xs sm:text-sm leading-relaxed">
-            Before investing a single rupee in equity mutual funds, park one month's living expenses in a regular savings bank account. This guarantees that if your laptop breaks or tuition fee is due, you won't be forced to pull money out of investments during a market dip.
+            Keep some money in a bank savings account for urgent costs, like a repair or fee. This can help you avoid needing to withdraw investments at a bad time.
           </p>
         </div>
 
@@ -1885,27 +2143,93 @@ function renderDashboardView() {
 
       <!-- Persistent Disclaimer Note -->
       <div class="p-4 rounded-xl bg-stone-100 border border-stone-200 text-center text-xs text-stone-600">
-        <strong class="font-semibold text-stone-800">Persistent Regulatory & Educational Disclosure:</strong> Illustrative estimates only. Returns aren’t guaranteed. Mutual fund investments are subject to market risks. Read all scheme related documents carefully.
+        <strong class="font-semibold text-stone-800">For learning only:</strong> These are examples, not a promise or financial advice. Returns can go up or down. Mutual fund investments are subject to market risks. Read all scheme related documents carefully.
       </div>
     </div>
   `;
 }
 
-function updateWhatIfBoost(val) {
-  state.whatIfContributionBoost = Number(val);
-  saveState();
+function quickSwitchScenario(key) {
+  if (!SCENARIO_RATES[key]) {
+    showToast('That scenario is not available. Choose Slower, Middle, or Faster.');
+    return;
+  }
+  state.selectedScenario = key;
+  persistPlan(true);
+  renderScenariosView();
+  renderReceiptView();
   renderDashboardView();
+  renderDipRehearsalView();
 }
 
-function quickSwitchScenario(key) {
-  state.selectedScenario = key;
-  saveState();
-  renderDashboardView();
+function editMonthlyContribution() {
+  state.setupStep = 3;
+  navigateTo('setup');
 }
 
 function openStepChecklistModal() {
   const m = document.getElementById('modal-checklist');
   if (m) m.classList.remove('hidden');
+}
+
+function simulateDipPlan(monthly, scenarioKey, years, goal, dropPercent, action) {
+  const allocations = PLAN_ALLOCATIONS[scenarioKey]?.allocations || PLAN_ALLOCATIONS.middle.allocations;
+  const horizonMonths = Math.round(years * 12);
+  const dropMonth = 24;
+
+  function project(includeDip) {
+    const balances = allocations.map(() => 0);
+    let valueBeforeDrop = 0;
+    let valueAfterDrop = 0;
+    let goalMonth = null;
+    let finalValue = 0;
+
+    for (let month = 1; month <= 1200; month++) {
+      let contribution = monthly;
+      if (includeDip && action === 'pause' && month > dropMonth && month <= dropMonth + 6) {
+        contribution = 0;
+      } else if (includeDip && action === 'increase' && month >= dropMonth && month < dropMonth + 12) {
+        contribution += 500;
+      }
+      allocations.forEach((item, index) => {
+        balances[index] = balances[index] * (1 + item.annualRatePct / 100 / 12) +
+          contribution * item.percent / 100;
+      });
+      const totalValue = balances.reduce((total, balance) => total + balance, 0);
+
+      if (month === dropMonth) {
+        valueBeforeDrop = totalValue;
+        if (includeDip) {
+          balances.forEach((balance, index) => {
+            balances[index] = balance * (1 - dropPercent / 100);
+          });
+          valueAfterDrop = balances.reduce((total, balance) => total + balance, 0);
+        }
+      }
+
+      const currentValue = balances.reduce((total, balance) => total + balance, 0);
+      if (goalMonth === null && currentValue >= goal) goalMonth = month;
+      if (month === horizonMonths) finalValue = currentValue;
+    }
+
+    return { valueBeforeDrop, valueAfterDrop, goalMonth, finalValue };
+  }
+
+  const baseline = project(false);
+  const simulated = project(true);
+  let goalShiftMonths = null;
+  if (baseline.goalMonth !== null && simulated.goalMonth !== null) {
+    goalShiftMonths = baseline.goalMonth < dropMonth
+      ? 0
+      : simulated.goalMonth - baseline.goalMonth;
+  }
+
+  return {
+    normalYear2: baseline.valueBeforeDrop,
+    dippedYear2: simulated.valueAfterDrop,
+    finalValue: simulated.finalValue,
+    goalShiftMonths
+  };
 }
 
 /* =========================================================================
@@ -1915,34 +2239,30 @@ function renderDipRehearsalView() {
   const container = document.getElementById('dip-rehearsal-content');
   if (!container) return;
 
-  const s = SCENARIO_RATES[state.selectedScenario];
+  const scenarioKey = SCENARIO_RATES[state.selectedScenario] ? state.selectedScenario : 'middle';
+  const s = SCENARIO_RATES[scenarioKey];
   const monthly = state.monthlyContribution;
   const years = state.timeHorizonYears;
   const dropPct = state.dipScenario.dropPercent;
   const action = state.dipScenario.actionTaken;
-
-  const normalYear2 = calculateSIP(monthly, s.rate, 2);
-  const normalYear8 = calculateSIP(monthly, s.rate, years);
-  const dippedYear2 = Math.round(normalYear2 * (1 - dropPct / 100));
-  const dropAmount = normalYear2 - dippedYear2;
-
-  let finalRecoveredValue = normalYear8;
-  let delayMonths = 7;
-  let actionAdvice = '';
-
-  if (action === 'continue') {
-    finalRecoveredValue = Math.round(normalYear8 * 0.94);
-    delayMonths = 8;
-    actionAdvice = `By continuing to invest ₹${monthly.toLocaleString('en-IN')}/mo through the dip, you bought mutual fund units at discounted prices. Compounding naturally caught up over the remaining ${years - 2} years with merely an 8-month timeline shift.`;
-  } else if (action === 'pause') {
-    finalRecoveredValue = Math.round(normalYear8 * 0.82);
-    delayMonths = 22;
-    actionAdvice = `Pausing all investments during the downturn prevented you from buying discounted units. Your recovery takes approximately 22 months longer.`;
-  } else if (action === 'increase') {
-    finalRecoveredValue = Math.round(normalYear8 * 1.05);
-    delayMonths = 0;
-    actionAdvice = `Stepping up contribution during the dip dramatically lowered your average unit cost. Your goal actually arrived slightly ahead of schedule!`;
-  }
+  const projection = simulateDipPlan(monthly, scenarioKey, years, state.goalAmount, dropPct, action);
+  const normalYear2 = Math.round(projection.normalYear2);
+  const dippedYear2 = Math.round(projection.dippedYear2);
+  const dropAmount = Math.max(0, normalYear2 - dippedYear2);
+  const finalRecoveredValue = Math.round(projection.finalValue);
+  const delayMonths = projection.goalShiftMonths;
+  const actionAdvice = action === 'continue'
+    ? `This example keeps your ₹${monthly.toLocaleString('en-IN')}/month contribution unchanged and applies a one-time ${dropPct}% simulated decline to the balance at the end of Year 2.`
+    : action === 'pause'
+      ? `This example pauses the ₹${monthly.toLocaleString('en-IN')}/month contribution for six months after the simulated Year 2 decline, then resumes it.`
+      : `This example adds ₹500/month for 12 months starting with the simulated Year 2 decline. Only use extra savings if they fit your budget.`;
+  const timelineLabel = delayMonths === null
+    ? 'Not reached in this 100-year simulation'
+    : delayMonths > 0
+      ? `About ${delayMonths} months later`
+      : delayMonths < 0
+        ? `About ${Math.abs(delayMonths)} months earlier`
+        : 'No change in this estimate';
 
   container.innerHTML = `
     <div class="max-w-4xl mx-auto space-y-8">
@@ -1961,9 +2281,9 @@ function renderDipRehearsalView() {
             <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 text-xs font-semibold uppercase">Stress Test</span>
             <span class="text-xs text-amber-800 font-medium">Educational simulation • Not a prediction</span>
           </div>
-          <h2 class="text-xl sm:text-2xl font-bold font-heading text-stone-900">What happens when the market drops -${dropPct}% in Year 2?</h2>
+          <h2 class="text-xl sm:text-2xl font-bold font-heading text-stone-900">What if the market drops -${dropPct}% in Year 2?</h2>
           <p class="text-xs sm:text-sm text-stone-600 mt-1 max-w-2xl">
-            In every 5-to-10 year investing cycle in India, a sharp pullback happens (like 2008 or 2020). Rehearsing this scenario removes the physiological fear before real money is on the line.
+            Explore one hypothetical decline in an educational example. Markets do not follow a schedule, and this simulation does not predict what will happen.
           </p>
         </div>
         <div class="shrink-0 flex sm:flex-col items-center sm:items-end justify-between w-full sm:w-auto gap-2">
@@ -1981,24 +2301,24 @@ function renderDipRehearsalView() {
           <div>
             <div class="text-xs text-stone-400">Total Invested in 24 Months:</div>
             <div class="text-sm font-semibold text-stone-700 tabular-nums">${formatINR(monthly * 24)}</div>
-            <div class="text-xs text-stone-400 mt-2">Projected Value Before Correction:</div>
+            <div class="text-xs text-stone-400 mt-2">Illustrative value before simulated decline:</div>
             <div class="text-2xl font-bold text-stone-900 tabular-nums">${formatINR(normalYear2)}</div>
           </div>
-          <p class="text-xs text-stone-500">Assumes orderly compound growth of ~${s.rate}% p.a. without black-swan disruptions.</p>
+          <p class="text-xs text-stone-500">Illustrative estimate using about ${getScenarioAnnualRate(scenarioKey).toFixed(1)}% blended annual growth before the simulated decline; actual returns vary and can be negative.</p>
         </div>
 
         <div class="bg-white rounded-2xl p-6 border-2 border-amber-500/40 shadow-sm space-y-4 bg-gradient-to-b from-white to-amber-50/20">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold text-amber-800 uppercase tracking-wider">During -${dropPct}% Correction</span>
-            <span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[11px] font-bold">Paper Drop</span>
+            <span class="text-xs font-semibold text-amber-800 uppercase tracking-wider">Simulated -${dropPct}% decline</span>
+            <span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[11px] font-bold">Simulation</span>
           </div>
           <div>
-            <div class="text-xs text-stone-400">Temporary Portfolio Valuation:</div>
+            <div class="text-xs text-stone-400">Illustrative value after decline:</div>
             <div class="text-2xl font-bold text-amber-900 tabular-nums">${formatINR(dippedYear2)}</div>
             <div class="text-xs text-coral-600 text-amber-800 mt-1 font-medium">Temporary paper decline: -${formatINR(dropAmount)}</div>
           </div>
           <div class="p-3 rounded-lg bg-stone-50 border border-stone-200 text-xs text-stone-600">
-            <strong>Key Understanding:</strong> Your mutual fund units did not evaporate. Only their current market quote dropped. If you do not hit "Sell", you haven't booked an actual cash loss.
+            <strong>Key Understanding:</strong> The example reduces the value of the holdings; it does not guarantee a recovery. Selling would convert them at the then-current value.
           </div>
         </div>
       </div>
@@ -2035,8 +2355,8 @@ function renderDipRehearsalView() {
               <span class="font-bold text-stone-900 text-base tabular-nums">${formatINR(finalRecoveredValue)}</span>
             </div>
             <div>
-              <span class="text-xs text-stone-500 block">Timeline Adjustment:</span>
-              <span class="font-semibold text-emerald-800 text-sm tabular-nums">${delayMonths === 0 ? 'No delay' : `+${delayMonths} months shift`}</span>
+              <span class="text-xs text-stone-500 block">Estimated goal timing vs. no dip:</span>
+              <span class="font-semibold text-emerald-800 text-sm tabular-nums">${timelineLabel}</span>
             </div>
           </div>
         </div>
@@ -2064,8 +2384,12 @@ function renderDipRehearsalView() {
 }
 
 function setDipAction(action) {
+  if (!['continue', 'pause', 'increase'].includes(action)) {
+    showToast('Choose one of the available dip responses.');
+    return;
+  }
   state.dipScenario.actionTaken = action;
-  saveState();
+  persistPlan();
   renderDipRehearsalView();
 }
 
@@ -2740,9 +3064,10 @@ function generateArthaAnswer(rawQuery) {
 
   // Plan Status & Current Goal
   if (q.includes('goal') || q.includes('how close') || q.includes('progress') || q.includes('my plan')) {
-    const s = SCENARIO_RATES[state.selectedScenario];
-    const estFV = calculateSIP(state.monthlyContribution, s.rate, state.timeHorizonYears);
-    return `Your active goal is set to ${formatLakhs(state.goalAmount)} over ${state.timeHorizonYears} years. With your monthly allocation of ${formatINR(state.monthlyContribution)} in the ${s.name} scenario, your estimated outcome is ~${formatINR(estFV)}. You can adjust your contribution anytime in the Dashboard.`;
+    const scenarioKey = PLAN_ALLOCATIONS[state.selectedScenario] ? state.selectedScenario : 'middle';
+    const estFV = calculatePlanSIP(state.monthlyContribution, scenarioKey, state.timeHorizonYears);
+    const monthlyNeeded = calculatePlanMonthlyNeeded(state.goalAmount, scenarioKey, state.timeHorizonYears);
+    return `Your goal is ${formatINR(state.goalAmount)} in ${state.timeHorizonYears} years. At ${formatINR(state.monthlyContribution)} per month, this educational example estimates ${formatINR(estFV)} using the selected plan's category percentages and growth assumptions. To reach the goal in that time under the same assumptions, it estimates about ${formatINR(monthlyNeeded)} per month. You can change your choices in My plan.`;
   }
 
   // Market Dip / Crash
@@ -2776,7 +3101,6 @@ function resetDemo() {
   state.setupStep = 1;
   state.flexMonthsPaused = 2;
   state.flexMode = 'pause';
-  state.whatIfContributionBoost = 1000;
   state.learnSubTab = 'options';
   state.optionsFilter = 'all';
   saveState();
@@ -2794,8 +3118,9 @@ function downloadPlanPDF() {
     const monthly = state.monthlyContribution || 3000;
     const goal = state.goalAmount || 1000000;
     const totalDeposited = monthly * years * 12;
-    const estimatedValue = calculateSIP(monthly, s.rate, years);
-    const yearsToGoal = calculateYearsToGoal(monthly, s.rate, goal);
+    const scenarioKey = PLAN_ALLOCATIONS[state.selectedScenario] ? state.selectedScenario : 'middle';
+    const estimatedValue = calculatePlanSIP(monthly, scenarioKey, years);
+    const yearsToGoal = calculatePlanYearsToGoal(monthly, scenarioKey, goal);
 
     const todayStr = new Date().toLocaleDateString('en-IN', {
       year: 'numeric',
@@ -2812,13 +3137,13 @@ function downloadPlanPDF() {
       monthlyFormatted: `Rs. ${monthly.toLocaleString('en-IN')}`,
       scenarioName: s.name,
       scenarioTitle: s.title,
-      scenarioRate: s.rate,
+      scenarioRate: getScenarioAnnualRate(scenarioKey),
       volatility: s.volatilityPill || 'Moderate volatility',
       totalDeposited: totalDeposited,
       totalDepositedFormatted: `Rs. ${totalDeposited.toLocaleString('en-IN')}`,
       estimatedValue: estimatedValue,
       estimatedValueFormatted: `Rs. ${estimatedValue.toLocaleString('en-IN')}`,
-      yearsToGoal: yearsToGoal
+      yearsToGoal: formatGoalTime(yearsToGoal)
     });
 
     const blob = new Blob([pdfString], { type: 'application/pdf' });
@@ -2947,7 +3272,7 @@ function generateBinaryPlanPdf(data) {
   text('F2', 11, M + 195, curY - 74, data.estimatedValueFormatted, 0.04, 0.5, 0.3);
 
   text('F1', 7.5, M + 365, curY - 56, 'ESTIMATED YEARS TO GOAL', 0.4, 0.4, 0.4);
-  text('F2', 11, M + 365, curY - 74, `~${data.yearsToGoal} Years`, 0.03, 0.22, 0.17);
+  text('F2', 11, M + 365, curY - 74, data.yearsToGoal, 0.03, 0.22, 0.17);
 
   // 4. Progress / Scenario Visual
   curY -= 125;

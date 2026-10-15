@@ -59,11 +59,14 @@ The 7 options include:
 
 ---
 
-### 4. Goal Completion Engine: “How close am I, and what could help me reach my goal?”
-- Clear breakdown: Goal target (₹10 Lakhs), estimated progress, amount remaining, and estimated timeline.
+### 4. Goal Completion Overview
+- Clear breakdown: goal target, estimated progress, amount remaining, and estimated timeline.
+- The monthly amount is compared with the illustrative amount required to reach the selected goal by the selected deadline; the tracker reports whether the example is on pace.
+- Monthly educational example breakdown uses the selected Slower, Middle, or Faster plan's own equity, debt, and gold percentages; category amounts update from the current monthly contribution.
+- The estimated final value and growth are calculated category by category using each plan's selected percentages and illustrative annual growth assumptions (equity 15%, debt 7%, gold 8%), then combined. These are educational examples, not forecasts or recommendations.
+- SIP is explained as a regular contribution method, not an investment category. Example allocations are not personalized recommendations and do not place transactions.
 - **Milestone checkpoints**: 25% (First Safety Net), 50% (Compounding Pivot), 75% (Home Stretch), and 100% (Milestone Reached).
 - **What changed since last check-in:** Monthly delta explanation.
-- **What-if acceleration explorer:** Test post-grad salary step-ups (+₹1,000 to +₹5,000/mo) and observe years saved.
 
 ---
 
