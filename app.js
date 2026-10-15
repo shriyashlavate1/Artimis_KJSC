@@ -78,10 +78,7 @@ const defaultState = {
   ],
 
   // Course Player State
-  activeCourseId: null,
-  isVideoPlaying: false,
-  videoCurrentTime: 120, // seconds
-  videoSpeed: '1x'
+  activeCourseId: null
 };
 
 const PLAN_INPUT_LIMITS = {
@@ -473,111 +470,81 @@ const INVESTMENT_OPTIONS = [
 const COURSES = [
   {
     id: 'course-1',
-    title: 'Investing Basics for College Students',
-    duration: '8 min',
-    totalSeconds: 480,
+    title: "What Does It Mean to Buy a Company's Stock?",
+    videoTitle: 'What it means to buy a company’s stock',
+    videoId: '98qfFzqDKR8',
+    videoDuration: '13:47',
     level: 'Beginner',
     category: 'Core Foundations',
     recommendedFor: ['low', 'moderate', 'high'],
-    description: 'From hostel pocket money to your first index fund. How compounding beats market timing and why starting early changes everything.',
+    description: 'Learn what buying a share means and how it represents a small ownership stake in a company.',
     thumbnailGrad: 'from-emerald-900 to-teal-900',
-    chapters: [
-      '1. The Chai & Budget Baseline (0:00 - 2:10)',
-      '2. FDs vs Inflation: The Silent Drag (2:11 - 4:30)',
-      '3. Why Starting at Age 19 Multiplies Wealth (4:31 - 6:45)',
-      '4. Setting Your Non-Negotiable Emergency Buffer (6:46 - 8:00)'
-    ],
-    keyTakeaway: 'Your greatest investing asset in college is not capital—it is having an 8-to-10 year runway for compound interest to multiply.'
+    keyTakeaway: 'A share represents part ownership in a company, and its market value can rise or fall.'
   },
   {
     id: 'course-2',
     title: 'Understanding Risk & Volatility',
-    duration: '10 min',
-    totalSeconds: 600,
+    videoTitle: 'Implied volatility',
+    videoId: 'VIHldsSmASU',
+    videoDuration: '5:00',
     level: 'Beginner',
     category: 'Risk Management',
     recommendedFor: ['low', 'moderate'],
-    description: 'Why do stocks bounce up and down? Learn to see volatility as the entrance fee for higher returns rather than a reason to panic.',
+    description: 'An introduction to implied volatility and how expectations about price movement affect options prices.',
     thumbnailGrad: 'from-teal-900 to-cyan-950',
-    chapters: [
-      '1. Volatility is Not Loss Until You Sell (0:00 - 3:00)',
-      '2. Historical Indian Market Drawdowns (3:01 - 5:45)',
-      '3. Matching Horizon to Asset Mix (5:46 - 8:15)',
-      '4. Sleep-at-Night Sanity Checks (8:16 - 10:00)'
-    ],
-    keyTakeaway: 'Paper drawdowns happen every 2–3 years in India. Staying invested through them is how multi-year wealth is forged.'
+    keyTakeaway: 'Implied volatility reflects expected movement in options prices; it does not predict whether a price will rise or fall.'
   },
   {
     id: 'course-3',
-    title: 'How SIPs & Compounding Work',
-    duration: '7 min',
-    totalSeconds: 420,
+    title: 'Compound Interest Basics',
+    videoTitle: 'Compound interest introduction',
+    videoId: 'Rm6UdfRs3gw',
+    videoDuration: '6:38',
     level: 'Beginner',
     category: 'Compounding',
     recommendedFor: ['moderate', 'high'],
-    description: 'The mathematical engine behind Systematic Investment Plans. See how small regular contributions snowball over time.',
+    description: 'See how interest can build on both the original amount and interest already earned.',
     thumbnailGrad: 'from-forest-900 to-emerald-950',
-    chapters: [
-      '1. What is an SIP? (0:00 - 1:45)',
-      '2. Rupee-Cost Averaging Illustrated (1:46 - 3:50)',
-      '3. The 3-Year Compounding Tipping Point (3:51 - 5:30)',
-      '4. Automating 2 Days After Stipend (5:31 - 7:00)'
-    ],
-    keyTakeaway: 'Automating your SIP ensures you invest first, then budget for college life with what remains.'
+    keyTakeaway: 'With compounding, future growth can include returns earned on earlier returns; actual investment returns vary.'
   },
   {
     id: 'course-4',
-    title: 'Staying Calm During a Market Dip',
-    duration: '9 min',
-    totalSeconds: 540,
+    title: 'How Investment Value Can Fall',
+    videoTitle: 'Wealth destruction 1',
+    videoId: 'Q7HbtnOyKMg',
+    videoDuration: '10:30',
     level: 'Intermediate',
     category: 'Behavioral Mindset',
     recommendedFor: ['moderate', 'high'],
-    description: 'A psychological survival guide for your first 20% market correction. How to avoid panic-selling at the worst possible time.',
+    description: 'Explore an example of how financial choices and market conditions can reduce wealth.',
     thumbnailGrad: 'from-amber-950 to-stone-900',
-    chapters: [
-      '1. The Physiological Urge to Sell (0:00 - 2:30)',
-      '2. How Dips Create Cheap Unit Accumulation (2:31 - 5:10)',
-      '3. Case Study: 2020 Rebound Timeline (5:11 - 7:20)',
-      '4. When (and When NOT) to Check Your Portfolio (7:21 - 9:00)'
-    ],
-    keyTakeaway: 'Checking your portfolio daily during market corrections causes emotional exhaustion. Set a quarterly review routine instead.'
+    keyTakeaway: 'Investment values can decline, and losses are possible; a past recovery does not guarantee a future one.'
   },
   {
     id: 'course-5',
-    title: 'Index Funds (Nifty 50) Demystified',
-    duration: '6 min',
-    totalSeconds: 360,
+    title: 'Exchange-Traded Funds Explained',
+    videoTitle: 'Exchange traded funds (ETFs)',
+    videoId: 'SFdsY9Rdh6w',
+    videoDuration: '5:02',
     level: 'Beginner',
     category: 'Asset Classes',
     recommendedFor: ['low', 'moderate', 'high'],
-    description: 'Why buying the entire Indian economy is safer and cheaper than attempting to pick individual winning stocks.',
+    description: 'Learn the basics of exchange-traded funds. Some ETFs track an index, but ETFs and index funds are not the same thing.',
     thumbnailGrad: 'from-emerald-950 to-stone-950',
-    chapters: [
-      '1. What Makes Up the Nifty 50? (0:00 - 1:50)',
-      '2. Direct vs Regular Mutual Funds (1:51 - 3:30)',
-      '3. How Low Expense Ratios Save Lakhs (3:31 - 4:50)',
-      '4. Selecting a Simple Index Scheme (4:51 - 6:00)'
-    ],
-    keyTakeaway: 'Direct Growth index funds eliminate high intermediary commissions, compounding more of your hard-earned rupees.'
+    keyTakeaway: 'An ETF is traded on an exchange; its holdings and risks depend on the particular fund.'
   },
   {
     id: 'course-6',
-    title: 'Balancing Semester Expenses & Investing',
-    duration: '5 min',
-    totalSeconds: 300,
+    title: 'A Simple Student Budget Example',
+    videoTitle: 'Budget example',
+    videoId: 'qQLLDPAEzT0',
+    videoDuration: '5:45',
     level: 'Beginner',
     category: 'Student Lifestyle',
     recommendedFor: ['low', 'moderate'],
-    description: 'How to manage exam seasons, laptop repairs, and festival travel without feeling guilty about pausing your SIP.',
+    description: 'Walk through a sample budget to see how income and expenses can be organized. Your own costs may be different.',
     thumbnailGrad: 'from-teal-950 to-emerald-900',
-    chapters: [
-      '1. The College Cashflow Cycle (0:00 - 1:30)',
-      '2. Planned Pauses vs Abandoning Your Goal (1:31 - 3:00)',
-      '3. The 48-Day Delay Reality (3:01 - 4:10)',
-      '4. Resuming with Zero Friction (4:11 - 5:00)'
-    ],
-    keyTakeaway: 'A planned 2-month pause during university finals delays your 8-year target by only ~48 days. Consistency does not require rigid perfection.'
+    keyTakeaway: 'A budget is a flexible example for planning income and expenses, not a rule that fits every student.'
   }
 ];
 
@@ -775,6 +742,9 @@ function bindGlobalEvents() {
 
 function closeAllModals() {
   document.querySelectorAll('.app-modal').forEach(m => m.classList.add('hidden'));
+  const coursePlayerContainer = document.getElementById('course-player-container');
+  if (coursePlayerContainer) coursePlayerContainer.replaceChildren();
+  state.activeCourseId = null;
 }
 
 // Main Render Function
@@ -2667,7 +2637,7 @@ function renderLearnView() {
           </div>
 
           <div class="z-10 flex items-center justify-between text-white text-xs">
-            <span class="font-medium">${course.duration} • ${course.level}</span>
+            <span class="font-medium">${course.videoDuration} • ${course.level}</span>
             <div class="w-8 h-8 rounded-full bg-white/20 group-hover:bg-emerald-500 text-white flex items-center justify-center transition-all shadow">
               <svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
             </div>
@@ -2807,9 +2777,6 @@ function renderLearnView() {
 
 function openCoursePlayer(courseId) {
   state.activeCourseId = courseId;
-  state.isVideoPlaying = false;
-  state.videoCurrentTime = 30;
-  saveState();
 
   const modal = document.getElementById('modal-course-player');
   if (!modal) return;
@@ -2825,69 +2792,36 @@ function renderCoursePlayerModal() {
   if (!course) return;
 
   const isDone = (state.user.completedCourses || []).includes(course.id);
-  const minutes = Math.floor(state.videoCurrentTime / 60);
-  const seconds = (state.videoCurrentTime % 60).toString().padStart(2, '0');
-  const progressPct = Math.round((state.videoCurrentTime / course.totalSeconds) * 100);
 
   container.innerHTML = `
     <div class="space-y-5">
-      <div class="video-player-container rounded-2xl relative flex flex-col justify-between p-4 shadow-lg">
-        <div class="flex items-center justify-between text-white/80 text-xs z-10">
-          <span class="bg-black/50 px-2 py-0.5 rounded">${course.title}</span>
-          <span class="bg-black/50 px-2 py-0.5 rounded font-mono">${minutes}:${seconds} / ${course.duration}</span>
-        </div>
-
-        <div class="absolute inset-0 flex items-center justify-center z-10">
-          <button type="button" onclick="toggleCoursePlayPause()" class="w-16 h-16 rounded-full bg-emerald-600/90 hover:bg-emerald-500 text-white flex items-center justify-center shadow-2xl transition-transform hover:scale-105">
-            ${state.isVideoPlaying ? `
-              <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-            ` : `
-              <svg class="w-7 h-7 ml-1" fill="currentColor" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-            `}
-          </button>
-        </div>
-
-        <div class="z-10 space-y-2">
-          <div class="w-full bg-white/20 h-2 rounded-full overflow-hidden cursor-pointer" onclick="seekCourseVideo(event)">
-            <div style="width: ${progressPct}%" class="bg-emerald-400 h-full transition-all"></div>
-          </div>
-
-          <div class="flex items-center justify-between text-white/80 text-xs">
-            <div class="flex items-center gap-3">
-              <button type="button" onclick="toggleCoursePlayPause()" class="hover:text-white">
-                ${state.isVideoPlaying ? 'Pause' : 'Play'}
-              </button>
-              <button type="button" onclick="toggleCourseSpeed()" class="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 font-mono text-[11px]">
-                ${state.videoSpeed}
-              </button>
-            </div>
-            <span class="text-[11px] text-emerald-200">Simulated 1080p Stream</span>
-          </div>
-        </div>
+      <div class="video-player-container rounded-2xl shadow-lg">
+        <iframe
+          class="w-full h-full"
+          src="https://www.youtube-nocookie.com/embed/${course.videoId}?hl=en&amp;cc_lang_pref=en&amp;cc_load_policy=1"
+          title="${course.videoTitle} - English video lesson from Khan Academy"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          referrerpolicy="strict-origin-when-cross-origin"
+          allowfullscreen
+          loading="eager">
+        </iframe>
       </div>
 
       <div class="space-y-4">
         <div>
-          <span class="text-xs font-semibold text-emerald-800 uppercase tracking-wider">${course.category} • ${course.duration}</span>
+          <span class="text-xs font-semibold text-emerald-800 uppercase tracking-wider">${course.category} • ${course.videoDuration} • English</span>
           <h2 class="text-xl font-bold font-heading text-stone-900 mt-0.5">${course.title}</h2>
           <p class="text-xs sm:text-sm text-stone-600 mt-1">${course.description}</p>
+          <p class="text-xs text-stone-500 mt-2">Video: ${course.videoTitle} · Khan Academy</p>
         </div>
 
         <div class="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-xs sm:text-sm text-emerald-950">
-          <strong class="font-bold block mb-1">Key Student Takeaway:</strong>
+          <strong class="font-bold block mb-1">Key Takeaway:</strong>
           ${course.keyTakeaway}
         </div>
 
-        <div>
-          <h4 class="text-xs font-bold text-stone-500 uppercase tracking-wider mb-2">Lesson Chapters</h4>
-          <ul class="space-y-1.5 text-xs text-stone-700">
-            ${course.chapters.map(ch => `
-              <li class="p-2 rounded-lg bg-stone-50 border border-stone-200/80 flex items-center justify-between">
-                <span>${ch}</span>
-                <span class="text-emerald-700 font-bold">✓</span>
-              </li>
-            `).join('')}
-          </ul>
+        <div class="p-3 rounded-xl bg-stone-50 border border-stone-200 text-xs text-stone-600">
+          Playback controls are in the video. Open this app over HTTP or HTTPS (not as a local file) and allow YouTube video playback on your network. An internet connection is required, and a video may be unavailable if its owner changes access settings. These lessons are for general education.
         </div>
       </div>
 
@@ -2903,27 +2837,6 @@ function renderCoursePlayerModal() {
       </div>
     </div>
   `;
-}
-
-function toggleCoursePlayPause() {
-  state.isVideoPlaying = !state.isVideoPlaying;
-  renderCoursePlayerModal();
-}
-
-function toggleCourseSpeed() {
-  state.videoSpeed = (state.videoSpeed === '1x') ? '1.5x' : '1x';
-  renderCoursePlayerModal();
-}
-
-function seekCourseVideo(e) {
-  const rect = e.currentTarget.getBoundingClientRect();
-  const clickX = e.clientX - rect.left;
-  const pct = Math.max(0, Math.min(1, clickX / rect.width));
-  const course = COURSES.find(c => c.id === state.activeCourseId);
-  if (course) {
-    state.videoCurrentTime = Math.round(pct * course.totalSeconds);
-    renderCoursePlayerModal();
-  }
 }
 
 function toggleCourseCompletion(courseId) {

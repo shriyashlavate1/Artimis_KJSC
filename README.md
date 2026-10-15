@@ -78,8 +78,8 @@ The 7 options include:
 ---
 
 ### 6. Goal-Related Learning Courses
-- 6 short video courses tailored to college investors.
-- Custom simulated video player with play/pause, scrub bar, speed toggle, chapter checklist, and key takeaways.
+- 6 English-language Khan Academy lessons embedded in the existing course player.
+- Video playback, seeking, and speed controls are provided by the embedded video player.
 - "Mark as Completed" button persists progress to user account.
 
 ---
@@ -103,4 +103,4 @@ Visit:
 ```
 http://localhost:3000
 ```
-or open `index.html` directly in any web browser.
+Use the HTTP URL when playing embedded lessons. Opening `index.html` directly with a `file://` URL may prevent YouTube from streaming video. The network must also allow YouTube video playback.
